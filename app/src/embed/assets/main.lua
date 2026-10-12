@@ -2,7 +2,8 @@
 -- «Математический параноик» — тренажёр устного счёта с троллингом.
 -- Темы: арифметика, степени, логарифмы, проценты, тригонометрия.
 -- Языки: русский, английский. Адаптивное меню под любой размер экрана.
--- Плавное управление джойстиком (разгон и торможение).
+-- Плавное управление джойстиком. Совместимость с разными GPU Android
+-- (нет circle("fill") и полупрозрачных заливок).
 
 -- ========================
 --   ЯЗЫКИ
@@ -327,17 +328,21 @@ local generators = {
 -- ========================
 local function getOptionPositions()
     local w, h = love.graphics.getDimensions()
-    local r = 45
-    local padX = r + 40
-    local padTop = 130
-    local padBottom = r + 60
+    local r = math.min(45, math.floor(w * 0.11))
+    r = math.max(r, 30)
+
+    local padX = r + 30
+    local safeTop = math.max(40, math.floor(h * 0.055))
+    local padTop = safeTop + 100
+    local padBottom = 190
+    local usableH = math.max(100, h - padTop - padBottom)
 
     return {
-        { padX,     padTop + (h - padTop - padBottom) * 0.3 },
-        { w - padX, padTop + (h - padTop - padBottom) * 0.3 },
-        { padX,     padTop + (h - padTop - padBottom) * 0.7 },
-        { w - padX, padTop + (h - padTop - padBottom) * 0.7 },
-    }
+        { padX,     padTop + usableH * 0.25 },
+        { w - padX, padTop + usableH * 0.25 },
+        { padX,     padTop + usableH * 0.75 },
+        { w - padX, padTop + usableH * 0.75 },
+    }, r
 end
 
 local function repositionOptions()
@@ -407,8 +412,12 @@ end
 -- ========================
 local function layoutStick()
     local w, h = love.graphics.getDimensions()
-    stick.baseX = stick.radius + 40
-    stick.baseY = h - stick.radius - 40
+    stick.radius = math.min(70, math.floor(w * 0.18))
+    stick.radius = math.max(stick.radius, 45)
+    stick.knobRadius = math.floor(stick.radius * 0.43)
+
+    stick.baseX = stick.radius + 30
+    stick.baseY = h - stick.radius - 60
     if not stick.active then
         stick.knobX = stick.baseX
         stick.knobY = stick.baseY
@@ -419,7 +428,7 @@ local function clampToWindow()
     local w, h = love.graphics.getDimensions()
     if player then
         player.x = math.max(0, math.min(w - player.size, player.x))
-        player.y = math.max(0, math.min(h - player.size, player.y))
+        player.y = math.max(80, math.min(h - player.size - 80, player.y))
     end
     arena.x, arena.y, arena.w, arena.h = 0, 0, w, h
 end
@@ -485,7 +494,7 @@ end
 --   LÖVE CALLBACKS
 -- ========================
 function love.load()
-    love.window.setMode(900, 700, {
+    love.window.setMode(720, 1280, {
         resizable = true,
         minwidth = 400,
         minheight = 500,
@@ -514,7 +523,6 @@ local function getInputDirection()
     if love.keyboard.isDown("down")  then dy = dy + 1 end
     if love.keyboard.isDown("up")    then dy = dy - 1 end
 
-    -- Если джойстик активен ИЛИ его скорость ещё не затухла — используем его
     if stick.active
         or math.abs(stick.dx) > 0.01
         or math.abs(stick.dy) > 0.01 then
@@ -575,13 +583,11 @@ function love.update(dt)
     local faking = fakeLag > 0
     local onTransition = levelTransition > 0
 
-    -- Плавное сглаживание скорости джойстика (разгон и торможение)
     local accelSpeed = 12
     local smoothFactor = math.min(1, accelSpeed * dt)
     stick.dx = stick.dx + (stick.targetDx - stick.dx) * smoothFactor
     stick.dy = stick.dy + (stick.targetDy - stick.dy) * smoothFactor
 
-    -- Если джойстик отпущен — цель = 0
     if not stick.active then
         stick.targetDx = 0
         stick.targetDy = 0
@@ -595,18 +601,19 @@ function love.update(dt)
     end
 
     local w, h = love.graphics.getDimensions()
+    local safeTop = math.max(40, math.floor(h * 0.055))
     player.x = math.max(0, math.min(w - player.size, player.x))
-    player.y = math.max(0, math.min(h - player.size, player.y))
+    player.y = math.max(safeTop + 70, math.min(h - player.size - 90, player.y))
 
     if cfg.shrink and not onTransition then
         player.x = math.max(30, math.min(w - 30 - player.size, player.x))
-        player.y = math.max(90, math.min(h - 30 - player.size, player.y))
+        player.y = math.max(safeTop + 90, math.min(h - 90 - player.size, player.y))
     end
 
     if level >= levelFeatures.movingAnswers and not onTransition then
         local padX = 70
-        local minY = 170
-        local maxY = h - 70
+        local minY = safeTop + 130
+        local maxY = h - 200
         for _, o in ipairs(problem.options) do
             o.x = o.x + o.vx * dt
             o.y = o.y + o.vy * dt
@@ -639,7 +646,7 @@ function love.update(dt)
                     stats.wrong = stats.wrong + 1
                     score = math.max(0, score - 1)
                     player.x = math.random(60, math.max(61, w - 60 - player.size))
-                    player.y = math.random(170, math.max(171, h - 60 - player.size))
+                    player.y = math.random(safeTop + 110, math.max(safeTop + 111, h - 100 - player.size))
                     taunt = L.wrongAnswer
                     tauntTimer = 2
                     makeProblem(level)
@@ -650,13 +657,24 @@ function love.update(dt)
     end
 end
 
+-- Джойстик: только circle("line"), без заливки
 local function drawStick()
-    love.graphics.setColor(1, 1, 1, 0.12)
-    love.graphics.circle("fill", stick.baseX, stick.baseY, stick.radius)
-    love.graphics.setColor(1, 1, 1, 0.35)
+    local rings = math.max(8, math.floor(stick.radius / 2))
+    for i = rings, 1, -1 do
+        local rr = stick.radius * (i / rings)
+        love.graphics.setColor(1, 1, 1, 0.10)
+        love.graphics.circle("line", stick.baseX, stick.baseY, rr)
+    end
+    love.graphics.setColor(1, 1, 1, 0.4)
     love.graphics.circle("line", stick.baseX, stick.baseY, stick.radius)
-    love.graphics.setColor(1, 1, 1, stick.active and 0.7 or 0.35)
-    love.graphics.circle("fill", stick.knobX, stick.knobY, stick.knobRadius)
+
+    local knobRings = math.max(5, math.floor(stick.knobRadius / 2))
+    local knobAlpha = stick.active and 0.7 or 0.35
+    for i = knobRings, 1, -1 do
+        local rr = stick.knobRadius * (i / knobRings)
+        love.graphics.setColor(1, 1, 1, knobAlpha)
+        love.graphics.circle("line", stick.knobX, stick.knobY, rr)
+    end
 end
 
 -- ========================
@@ -719,6 +737,7 @@ local function getMenuLayout()
     }
 end
 
+-- Меню: непрозрачные заливки + рамки (совместимо с любым GPU)
 local function drawMenu()
     local M = getMenuLayout()
     local w, h = M.w, M.h
@@ -730,28 +749,38 @@ local function drawMenu()
 
     love.graphics.setColor(0.9, 0.9, 0.9)
     love.graphics.printf(L.chooseLang, 0, 145, w, "center")
+
     for _, b in ipairs(M.langBtns) do
         if b.code == lang then
             love.graphics.setColor(0.3, 0.7, 1.0)
+            love.graphics.rectangle("fill", b.x, b.y, b.w, b.h, 6, 6)
+            love.graphics.setColor(0, 0, 0)
         else
-            love.graphics.setColor(0.25, 0.25, 0.35)
+            love.graphics.setColor(0.15, 0.15, 0.2)
+            love.graphics.rectangle("fill", b.x, b.y, b.w, b.h, 6, 6)
+            love.graphics.setColor(0.4, 0.4, 0.5)
+            love.graphics.rectangle("line", b.x, b.y, b.w, b.h, 6, 6)
+            love.graphics.setColor(1, 1, 1)
         end
-        love.graphics.rectangle("fill", b.x, b.y, b.w, b.h, 6, 6)
-        love.graphics.setColor(1, 1, 1)
         love.graphics.printf(b.code == "ru" and "Русский" or "English",
             b.x, b.y + 12, b.w, "center")
     end
 
     love.graphics.setColor(0.9, 0.9, 0.9)
     love.graphics.printf(L.chooseTopic, 0, 228, w, "center")
+
     for _, b in ipairs(M.topicBtns) do
         if b.topic == topic then
             love.graphics.setColor(0.3, 0.7, 1.0)
+            love.graphics.rectangle("fill", b.x, b.y, b.w, b.h, 6, 6)
+            love.graphics.setColor(0, 0, 0)
         else
-            love.graphics.setColor(0.25, 0.25, 0.35)
+            love.graphics.setColor(0.15, 0.15, 0.2)
+            love.graphics.rectangle("fill", b.x, b.y, b.w, b.h, 6, 6)
+            love.graphics.setColor(0.4, 0.4, 0.5)
+            love.graphics.rectangle("line", b.x, b.y, b.w, b.h, 6, 6)
+            love.graphics.setColor(1, 1, 1)
         end
-        love.graphics.rectangle("fill", b.x, b.y, b.w, b.h, 6, 6)
-        love.graphics.setColor(1, 1, 1)
         love.graphics.printf(L.topics[b.topic], b.x, b.y + (b.h - 18) / 2, b.w, "center")
     end
 
@@ -761,21 +790,16 @@ local function drawMenu()
     love.graphics.setColor(0, 0, 0)
     love.graphics.printf(L.start, sb.x, sb.y + 18, sb.w, "center")
 
-    -- Одна подсказка, подходящая платформе
     local startBottom = sb.y + sb.h
     local hintY = startBottom + 25
     local lineH = font:getHeight() + 4
-
     love.graphics.setColor(0.6, 0.6, 0.7)
     local hint = M.hasTouch and L.controlsMobile or L.controlsPC
-
-    if hintY + lineH > h - 10 then
-        hintY = h - lineH - 10
-    end
-
+    if hintY + lineH > h - 10 then hintY = h - lineH - 10 end
     love.graphics.printf(hint, 20, hintY, w - 40, "center")
 end
 
+-- Отрисовка игры: без circle("fill"), без полупрозрачных заливок
 function love.draw()
     if scene == "menu" then
         drawMenu()
@@ -783,23 +807,36 @@ function love.draw()
     end
 
     local w, h = love.graphics.getDimensions()
+    local safeTop = math.max(40, math.floor(h * 0.055))
+    local topBarH = 60
 
-    if cfg.shrink then
-        love.graphics.setColor(1, 0.3, 0.3, 0.25)
-        love.graphics.rectangle("line", 30, 90, w - 60, h - 120, 8, 8)
-    end
+    -- Панель примера: полностью непрозрачная
+    love.graphics.setColor(0.1, 0.1, 0.15)
+    love.graphics.rectangle("fill", 0, 0, w, safeTop + topBarH)
 
+    -- Текст примера
+    love.graphics.setColor(1, 0.95, 0.6)
+    love.graphics.printf(problem.text, 20, safeTop + 18, w - 40, "center")
+
+    -- Кружки с ответами: концентрические линии вместо заливки
+    local positions, r = getOptionPositions()
     for _, o in ipairs(problem.options) do
-        love.graphics.setColor(0.15, 0.25, 0.45)
-        love.graphics.circle("fill", o.x, o.y, 45)
+        local rings = math.max(8, math.floor(r / 2))
+        for i = rings, 1, -1 do
+            local rr = r * (i / rings)
+            love.graphics.setColor(0.15, 0.25, 0.45)
+            love.graphics.circle("line", o.x, o.y, rr)
+        end
         love.graphics.setColor(0.4, 0.7, 1.0)
-        love.graphics.circle("line", o.x, o.y, 45)
+        love.graphics.circle("line", o.x, o.y, r)
         love.graphics.setColor(1, 1, 1)
         local text = tostring(o.value)
         local textWidth = font:getWidth(text)
-        love.graphics.print(text, o.x - textWidth/2, o.y - 10)
+        local textHeight = font:getHeight()
+        love.graphics.print(text, o.x - textWidth/2, o.y - textHeight/2)
     end
 
+    -- Игрок
     local pc = { 0.3, 0.9, 0.5 }
     if invertTimer > 0 then pc = { 1, 0.3, 0.3 } end
     if frozenTimer > 0 then pc = { 0.5, 0.7, 1 } end
@@ -808,39 +845,40 @@ function love.draw()
 
     drawStick()
 
-    love.graphics.setColor(0.1, 0.1, 0.15, 0.95)
-    love.graphics.rectangle("fill", 0, 0, w, 70)
-    love.graphics.setColor(1, 0.95, 0.6)
-    love.graphics.printf(problem.text, 20, 22, w - 40, "center")
-
+    -- UI
     love.graphics.setColor(1, 1, 1)
-    love.graphics.print(L.level .. ": " .. level .. " / " .. maxLevel, 10, 80)
-    love.graphics.print(L.correct .. ": " .. score .. " " .. L.of .. " " .. needed, 10, 100)
+    love.graphics.print(L.level .. ": " .. level .. " / " .. maxLevel, 10, safeTop + topBarH + 10)
+    love.graphics.print(L.correct .. ": " .. score .. " " .. L.of .. " " .. needed, 10, safeTop + topBarH + 30)
 
+    -- Фраза троллинга над джойстиком
     if taunt ~= "" then
         love.graphics.setColor(1, 0.8, 0.3)
-        love.graphics.printf(taunt, 20, h - 30, w - 40, "center")
+        local tauntY = h - stick.radius * 2 - 70
+        if tauntY < safeTop + topBarH + 60 then tauntY = safeTop + topBarH + 60 end
+        love.graphics.printf(taunt, 20, tauntY, w - 40, "center")
     end
 
+    -- Заставка уровня: непрозрачный фон
     if levelTransition > 0 then
-        local alpha = math.min(1, levelTransition * 2)
-        love.graphics.setColor(0, 0, 0, 0.7 * alpha)
+        love.graphics.setColor(0.05, 0.05, 0.1)
         love.graphics.rectangle("fill", 0, 0, w, h)
-        love.graphics.setColor(1, 1, 1, alpha)
+        love.graphics.setColor(1, 1, 1)
         love.graphics.printf(transitionText, 20, h/2 - 20, w - 40, "center")
         love.graphics.printf(L.solve .. " " .. needed .. " " .. L.examples,
             20, h/2 + 10, w - 40, "center")
     end
 
+    -- Фейк-лаг
     if fakeLag > 0 then
-        love.graphics.setColor(0, 0, 0, 0.9)
+        love.graphics.setColor(0.05, 0.05, 0.1)
         love.graphics.rectangle("fill", 0, 0, w, h)
         love.graphics.setColor(1, 1, 1)
         love.graphics.printf("...", 0, h/2, w, "center")
     end
 
+    -- Победа
     if win then
-        love.graphics.setColor(0, 0, 0, 0.85)
+        love.graphics.setColor(0.05, 0.05, 0.1)
         love.graphics.rectangle("fill", 0, 0, w, h)
         love.graphics.setColor(0.4, 1, 0.5)
         love.graphics.printf(L.winTitle, 20, h/2 - 110, w - 40, "center")
@@ -914,7 +952,7 @@ local function menuClick(x, y)
 end
 
 -- =======================
---   СЕНСОРНОЕ УПРАВЛЕНИЕ (плавное)
+--   СЕНСОРНОЕ УПРАВЛЕНИЕ
 -- =======================
 local function updateStickVector(x, y)
     local dx = x - stick.baseX
@@ -929,8 +967,6 @@ local function updateStickVector(x, y)
     stick.knobX = stick.baseX + dx
     stick.knobY = stick.baseY + dy
 
-    -- Нелинейная зависимость: лёгкое отклонение = медленно,
-    -- сильное отклонение = быстро (кривая smoothstep)
     local nx, ny = dx / maxDist, dy / maxDist
     local mag = math.sqrt(nx*nx + ny*ny)
     local deadzone = 0.12
@@ -940,7 +976,7 @@ local function updateStickVector(x, y)
         stick.targetDy = 0
     else
         local t = (mag - deadzone) / (1 - deadzone)
-        local curve = t * t * (3 - 2 * t)  -- smoothstep
+        local curve = t * t * (3 - 2 * t)
         stick.targetDx = (nx / mag) * curve
         stick.targetDy = (ny / mag) * curve
     end
